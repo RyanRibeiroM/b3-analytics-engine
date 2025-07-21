@@ -1,0 +1,15 @@
+# Ignorar pastas de cache do Python
+__pycache__/
+*.pyc
+
+# Ignorar arquivos de ambiente com segredos
+.env
+
+# Ignorar a pasta do Data Lake local
+data_lake_local/
+
+# Ignorar arquivos de ambiente virtual (se estiver usando)
+venv/
+.venv/
+
+COTAHIST_A2009_to_A2020_P.csv

@@ -1,0 +1,77 @@
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.3.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: confluentinc/cp-kafka:7.3.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_INTERNAL:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,PLAINTEXT_INTERNAL://kafka:29092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.3.0
+    container_name: kafka-init
+    depends_on:
+      - kafka
+    command: >
+      bash -c "
+        cub kafka-ready -b kafka:29092 1 30 &&
+        kafka-topics --create --topic brapi_stock_quotes --bootstrap-server kafka:29092 --replication-factor 1 --partitions 1 &&
+        kafka-topics --create --topic yfinance_stock_quotes --bootstrap-server kafka:29092 --replication-factor 1 --partitions 1
+      "
+
+  kafdrop:
+    image: obsidiandynamics/kafdrop:latest
+    container_name: kafdrop
+    depends_on:
+      - kafka-init
+    ports:
+      - "19000:9000"
+    environment:
+      KAFKA_BROKERCONNECT: "kafka:29092"
+
+  brapi_producer:
+    build:
+      context: .
+      dockerfile: ./ingestion_services/brapi_producer/Dockerfile
+    container_name: brapi_producer
+    depends_on:
+      - kafka-init
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      BRAPI_TOPIC: "brapi_stock_quotes"
+      BRAPI_TOKEN: "b38wCXyAUpwq5vuSstYFcY"
+
+  yfinance_producer:
+    build:
+      context: .
+      dockerfile: ./ingestion_services/yfinance_producer/Dockerfile
+    container_name: yfinance_producer
+    depends_on:
+      - kafka-init
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
+      YFINANCE_TOPIC: "yfinance_stock_quotes"
+
+  batch_ingestion:
+    build:
+      context: .
+      dockerfile: ./ingestion_services/batch_ingestion/Dockerfile
+    container_name: batch_ingestion
+    volumes:
+      - ./data_lake_local:/data_lake
+    environment:
+      RAW_ZONE_PATH: "/data_lake/raw/b3_historical_data"
