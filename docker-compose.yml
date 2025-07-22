@@ -30,8 +30,20 @@ services:
       bash -c "
         cub kafka-ready -b kafka:29092 1 30 &&
         kafka-topics --create --topic brapi_stock_quotes --bootstrap-server kafka:29092 --replication-factor 1 --partitions 1 &&
-        kafka-topics --create --topic yfinance_stock_quotes --bootstrap-server kafka:29092 --replication-factor 1 --partitions 1
+        kafka-topics --create --topic postgres_stock_quotes --bootstrap-server kafka:29092 --replication-factor 1 --partitions 1
       "
+
+  postgres:
+    image: postgres:13
+    container_name: postgres
+    environment:
+      POSTGRES_DB: "stock_data"
+      POSTGRES_USER: "user"
+      POSTGRES_PASSWORD: "password"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
 
   kafdrop:
     image: obsidiandynamics/kafdrop:latest
@@ -55,16 +67,34 @@ services:
       BRAPI_TOPIC: "brapi_stock_quotes"
       BRAPI_TOKEN: "b38wCXyAUpwq5vuSstYFcY"
 
-  yfinance_producer:
+  yfinance_to_postgres:
     build:
       context: .
-      dockerfile: ./ingestion_services/yfinance_producer/Dockerfile
-    container_name: yfinance_producer
+      dockerfile: ./ingestion_services/yfinance_to_postgres/Dockerfile
+    container_name: yfinance_to_postgres
+    depends_on:
+      - postgres
+    environment:
+      POSTGRES_HOST: "postgres"
+      POSTGRES_DB: "stock_data"
+      POSTGRES_USER: "user"
+      POSTGRES_PASSWORD: "password"
+
+  postgres_producer:
+    build:
+      context: .
+      dockerfile: ./ingestion_services/postgres_producer/Dockerfile
+    container_name: postgres_producer
     depends_on:
       - kafka-init
+      - yfinance_to_postgres
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "kafka:29092"
-      YFINANCE_TOPIC: "yfinance_stock_quotes"
+      YFINANCE_TOPIC: "postgres_stock_quotes"
+      POSTGRES_HOST: "postgres"
+      POSTGRES_DB: "stock_data"
+      POSTGRES_USER: "user"
+      POSTGRES_PASSWORD: "password"
 
   batch_ingestion:
     build:
@@ -75,3 +105,6 @@ services:
       - ./data_lake_local:/data_lake
     environment:
       RAW_ZONE_PATH: "/data_lake/raw/b3_historical_data"
+
+volumes:
+  postgres_data:
