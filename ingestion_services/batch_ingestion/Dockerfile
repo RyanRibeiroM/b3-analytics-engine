@@ -9,4 +9,6 @@ COPY ./ingestion_services/batch_ingestion/requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
+RUN mkdir -p /tmp
+
 CMD ["python", "main.py"]

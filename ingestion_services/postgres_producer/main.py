@@ -29,11 +29,27 @@ def create_pg_connection(db_host, db_port, db_name, db_user, db_password):
                 user=db_user,
                 password=db_password
             )
-            print("Conexão com o PostgreSQL (postgres_producer) estabelecida com sucesso.")
         except psycopg2.OperationalError as e:
             print(f"Erro ao conectar ao PostgreSQL: {e}. Tentando novamente em 5 segundos...")
             time.sleep(5)
     return conn
+
+def create_table_if_not_exists(conn):
+    with conn.cursor() as cur:
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS yfinance_quotes (
+                id SERIAL PRIMARY KEY,
+                symbol VARCHAR(15),
+                open NUMERIC,
+                high NUMERIC,
+                low NUMERIC,
+                close NUMERIC,
+                volume BIGINT,
+                timestamp TIMESTAMP,
+                ingestion_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        conn.commit()
 
 def default_json_serializer(obj):
     if hasattr(obj, 'isoformat'):
@@ -51,9 +67,10 @@ def main():
         return
         
     conn = create_pg_connection(db_host, db_port, db_name, db_user, db_password)
+    
+    create_table_if_not_exists(conn)
 
     conn.autocommit = True
-
     last_processed_id = 0
     
     try:
