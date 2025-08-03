@@ -1,0 +1,5 @@
+pandas
+pyarrow
+boto3
+sqlalchemy
+psycopg2-binary

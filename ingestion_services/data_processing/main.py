@@ -147,7 +147,7 @@ def process_data(
     )
 
     save_df_to_minio(
-        s3_client, df_final, loaded_bucket, "loaded/b3_final_processed.parquet"
+        s3_client, df_final, loaded_bucket, f"b3_final_processed_{processing_timestamp}.parquet"
     )
 
 

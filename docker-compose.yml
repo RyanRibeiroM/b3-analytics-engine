@@ -153,6 +153,25 @@ services:
       POSTGRES_USER: "user"
       POSTGRES_PASSWORD: "password"
 
+  data_warehouse_loader:
+    build:
+      context: ./data_warehouse
+      dockerfile: Dockerfile
+    container_name: data_warehouse_loader
+    depends_on:
+      - minio-init
+      - postgres
+    environment:
+      MINIO_ENDPOINT: "http://minio:9000"
+      MINIO_ACCESS_KEY: "minioadmin"
+      MINIO_SECRET_KEY: "minioadmin"
+      MINIO_LOADED_BUCKET: "loaded"
+      POSTGRES_HOST: "postgres"
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: "stock_data"
+      POSTGRES_USER: "user"
+      POSTGRES_PASSWORD: "password"
+
   batch_ingestion:
     build:
       context: .
@@ -187,3 +206,4 @@ services:
 volumes:
   postgres_data:
   minio_data:
+
