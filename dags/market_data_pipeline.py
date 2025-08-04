@@ -46,7 +46,7 @@ def historical_load_dag():
     dag_id='2_incremental_market_data_dag',
     start_date=days_ago(1),
     default_args=default_args,
-    schedule_interval=timedelta(minutes=30),
+    schedule_interval=timedelta(minutes=1),
     catchup=False,
     max_active_runs=1,
     tags=['market-data', 'incremental'],

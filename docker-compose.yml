@@ -44,6 +44,7 @@ services:
     image: postgres:13
     container_name: postgres
     environment:
+      POSTGRES_HOST: postgres
       POSTGRES_DB: "airflow"
       POSTGRES_USER: "airflow"
       POSTGRES_PASSWORD: "airflow"
@@ -203,6 +204,24 @@ services:
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
       - BRAPI_TOKEN=${BRAPI_TOKEN}
       - AIRFLOW__WEBSERVER__SECRET_KEY=6b0aad36669d7723dfc0c0f587b07c1e
+
+  analytics_service:
+    build:
+      context: .
+      dockerfile: ./analytics_service/Dockerfile
+    container_name: analytics_service
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./analytics_service:/app
+    environment:
+      POSTGRES_HOST: "postgres"
+      POSTGRES_DB: "b3_dw" 
+      POSTGRES_USER: "user"
+      POSTGRES_PASSWORD: "password"
 
 volumes:
   postgres_data:
