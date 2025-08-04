@@ -1,0 +1,9 @@
+pandas
+boto3
+yfinance
+psycopg2-binary
+kafka-python
+SQLAlchemy
+matplotlib
+seaborn
+apache-airflow-providers-amazon
