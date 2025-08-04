@@ -29,7 +29,7 @@ default_args = {
     tags=['market-data', 'historical', 'setup'],
     doc_md="""
     ### DAG de Carga Histórica
-    Esta DAG deve ser executada **uma única vez** para popular o Data Lake (MinIO)
+    Esta DAG deve ser executada uma vez para popular o Data Lake (MinIO)
     com os dados históricos da B3.
     Ela lê o arquivo CSV grande, o processa e salva o resultado em formato Parquet.
     """
@@ -58,6 +58,7 @@ def historical_load_dag():
     3.  **Sensor**: Aguarda a chegada de novos dados da Brapi no MinIO.
     4.  **Processamento**: Se novos dados chegarem, a task de processamento é acionada.
     5.  **Carregamento**: O resultado final é carregado no Data Warehouse.
+    6. **Dashboard**: Gera visuais para análise dos dados de mercado.
     """
 )
 def incremental_market_data_dag():

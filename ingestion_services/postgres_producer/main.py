@@ -1,5 +1,3 @@
-# Ficheiro: ingestion_services/postgres_producer/postgres_producer.py
-
 import os
 import time
 import json
@@ -8,7 +6,6 @@ from sqlalchemy import create_engine, text
 from datetime import datetime, timedelta
 
 def get_env_variables():
-    # Função para obter as variáveis de ambiente necessárias.
     kafka_brokers = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
     yfinance_topic = os.getenv("YFINANCE_TOPIC")
     postgres_host = os.getenv("POSTGRES_HOST")
@@ -35,7 +32,6 @@ def main():
         postgres_password,
     ) = get_env_variables()
 
-    # Tenta conectar-se ao Kafka
     print(f">>> [LOG] Tentando conectar ao Kafka em: {kafka_brokers}")
     producer = None
     while not producer:
@@ -49,7 +45,6 @@ def main():
             print(f">>> [ERRO] Falha ao conectar ao Kafka: {e}. Tentando novamente em 10 segundos...")
             time.sleep(10)
 
-    # Tenta conectar-se ao Postgres
     db_url = f"postgresql://{postgres_user}:{postgres_password}@{postgres_host}/{postgres_db}"
     print(f">>> [LOG] Tentando conectar à base de dados Postgres em: {postgres_host}")
     engine = None
@@ -58,12 +53,10 @@ def main():
             engine = create_engine(db_url)
             with engine.connect() as connection:
                 print(">>> [LOG] Conexão com o Postgres estabelecida com SUCESSO!")
-            # A conexão é fechada automaticamente aqui.
         except Exception as e:
             print(f">>> [ERRO] Falha ao conectar ao Postgres: {e}. Tentando novamente em 10 segundos...")
             time.sleep(10)
 
-    # Inicia a leitura da base de dados a partir de um ponto antigo no tempo
     last_timestamp = datetime.now() - timedelta(days=365 * 10) 
 
     print(">>> [LOG] Entrando no loop principal para ler dados do Postgres...")
