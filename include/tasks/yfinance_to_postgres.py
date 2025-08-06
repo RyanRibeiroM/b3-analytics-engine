@@ -24,7 +24,6 @@ def create_table_if_not_exists(conn):
             """
         )
         conn.commit()
-        print("Tabela 'yfinance_quotes' verificada/criada com sucesso.")
 
 def insert_stock_data(conn, stock_data):
 
@@ -50,10 +49,7 @@ def insert_stock_data(conn, stock_data):
                 ),
             )
             conn.commit()
-            if cur.rowcount > 0:
-                print(f"Dados inseridos para: {stock_data['symbol']} em {stock_data['timestamp']}")
-            else:
-                print(f"Dados para {stock_data['symbol']} em {stock_data['timestamp']} já existiam. Ignorando.")
+            
         except Exception as e:
             print(f"Erro ao inserir dados para {stock_data['symbol']}: {e}")
             conn.rollback()
@@ -68,14 +64,12 @@ def execute_yfinance_to_postgres(**kwargs):
     db_password = "password"
     tickers_to_monitor = ["PETR4.SA", "VALE3.SA", "ITUB4.SA", "^BVSP"]
 
-    print("Conectando ao PostgreSQL...")
     conn = psycopg2.connect(
         host=db_host, port=db_port, dbname=db_name, user=db_user, password=db_password
     )
     
     create_table_if_not_exists(conn)
 
-    print(f"Buscando dados para os tickers: {tickers_to_monitor}")
     for ticker in tickers_to_monitor:
         try:
             ticker_data = yf.Ticker(ticker)
@@ -93,11 +87,8 @@ def execute_yfinance_to_postgres(**kwargs):
                     "timestamp": last_quote.name.to_pydatetime(),
                 }
                 insert_stock_data(conn, stock_data)
-            else:
-                print(f"Nenhum dado histórico encontrado para {ticker} no período solicitado.")
 
         except Exception as e:
             print(f"Falha geral ao processar o ticker {ticker}: {e}")
 
-    print("Fechando a conexão com o PostgreSQL.")
     conn.close()

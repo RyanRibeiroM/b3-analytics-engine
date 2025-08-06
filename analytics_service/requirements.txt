@@ -5,3 +5,4 @@ matplotlib
 seaborn
 SQLAlchemy
 psycopg2-binary
+humanize

@@ -15,7 +15,6 @@ def create_producer(bootstrap_servers, retries=5, delay=5):
                 retries=3,
                 request_timeout_ms=30000 
             )
-            print("Produtor Kafka conectado com sucesso.")
             return producer
         except Exception as e:
             attempt += 1

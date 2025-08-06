@@ -6,8 +6,6 @@ from sqlalchemy import create_engine
 from airflow.hooks.base import BaseHook
 
 def get_real_data_from_dw():
-    print("Conectando ao Data Warehouse para extrair dados...")
-    
     conn = BaseHook.get_connection('postgres_dw_conn')
     
     engine_string = f"postgresql+psycopg2://{conn.login}:{conn.password}@{conn.host}:{conn.port}/{conn.schema}"
@@ -17,11 +15,6 @@ def get_real_data_from_dw():
         sql_query = "SELECT * FROM b3_analytics_data;"
         df = pd.read_sql(sql_query, engine)
         
-        if df.empty:
-            print("AVISO: DataFrame vazio. O pipeline pode não ter carregado dados ainda.")
-            return df
-
-        print(f"Dados extraídos com sucesso! {len(df)} linhas encontradas.")
         return df
     except Exception as e:
         print(f"Erro ao carregar dados do DW: {e}")
@@ -31,8 +24,6 @@ def generate_dashboard_visuals(df):
     if df.empty:
         print("DataFrame está vazio. Não é possível gerar visualizações.")
         return
-
-    print("\nGerando visualizações do dashboard...")
     
     df['date'] = pd.to_datetime(df['date'])
     df = df.sort_values(by=['symbol', 'date'])
@@ -57,7 +48,6 @@ def generate_dashboard_visuals(df):
     plt.tight_layout()
     plt.savefig(f"{output_dir}/cumulative_returns.png")
     plt.close()
-    print("Gráfico de Retorno Acumulado salvo em output/cumulative_returns.png")
 
     returns_df = df.pivot(index='date', columns='symbol', values='daily_return')
     correlation_matrix = returns_df.corr()
@@ -68,7 +58,6 @@ def generate_dashboard_visuals(df):
     plt.tight_layout()
     plt.savefig(f"{output_dir}/correlation_heatmap.png")
     plt.close()
-    print("Heatmap de Correlação salvo em output/correlation_heatmap.png")
 
 def execute_dashboard_generation():
     df_data = get_real_data_from_dw()

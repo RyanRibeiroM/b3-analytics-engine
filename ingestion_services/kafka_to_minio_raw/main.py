@@ -93,7 +93,6 @@ def main():
                 f"{topic}/{path_prefix}/{message.timestamp}_{message.offset}.json"
             )
 
-            print(f"Recebido da Tópico: {topic}, Offset: {message.offset}")
             write_to_minio(
                 s3_client,
                 minio_raw_bucket,

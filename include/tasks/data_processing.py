@@ -1,110 +1,108 @@
-import os
-import pandas as pd
-import boto3
-from io import BytesIO
 import json
+import os
+from kafka import KafkaConsumer, KafkaProducer
 from datetime import datetime
+from minio import Minio
+from io import BytesIO
 
-
-def get_s3_client():
-    return boto3.client(
-        "s3",
-        endpoint_url=os.getenv("MINIO_ENDPOINT", "http://minio:9000"),
-        aws_access_key_id=os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
-        aws_secret_access_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
+def create_kafka_consumer(topic):
+    return KafkaConsumer(
+        topic,
+        bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092"),
+        auto_offset_reset='earliest',
+        consumer_timeout_ms=15000,
+        value_deserializer=lambda x: json.loads(x.decode('utf-8')),
+        group_id=f"processing-group-{topic}-{datetime.now().isoformat()}"
     )
 
-def get_all_s3_objects(s3_client, bucket, prefix):
-    paginator = s3_client.get_paginator('list_objects_v2')
-    pages = paginator.paginate(Bucket=bucket, Prefix=prefix)
-    all_objects = []
-    for page in pages:
-        if "Contents" in page:
-            all_objects.extend(page["Contents"])
-    return all_objects
+def create_kafka_producer():
+    return KafkaProducer(
+        bootstrap_servers=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka:29092"),
+        value_serializer=lambda v: json.dumps(v, default=str).encode('utf-8')
+    )
 
-def save_df_to_minio(s3_client, df, bucket, key):
-    out_buffer = BytesIO()
-    df.to_parquet(out_buffer, index=False)
-    out_buffer.seek(0)
-    s3_client.put_object(Bucket=bucket, Key=key, Body=out_buffer.read())
-    print(f"DataFrame salvo com sucesso em: {bucket}/{key}")
-
+def create_minio_client():
+    return Minio(
+        os.getenv("MINIO_ENDPOINT", "minio:9000"),
+        access_key=os.getenv("MINIO_ACCESS_KEY", "minioadmin"),
+        secret_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
+        secure=False
+    )
 
 def execute_data_processing(**kwargs):
-    s3_client = get_s3_client()
-    raw_bucket = "raw"
-    loaded_bucket = "loaded"
-    execution_date_str = kwargs['ds_nodash']
+    brapi_consumer = create_kafka_consumer('brapi_stock_quotes')
+    yfinance_consumer = create_kafka_consumer('postgres_stock_quotes')
+    producer = create_kafka_producer()
+    minio_client = create_minio_client()
+    
+    processing_bucket = "processing"
 
-    print("Carregando dados históricos do MinIO...")
-    historical_prefix = "kaggle/"
-    historical_files = get_all_s3_objects(s3_client, raw_bucket, historical_prefix)
-    if not historical_files:
-        raise FileNotFoundError("Nenhum arquivo histórico encontrado em raw/kaggle/. Execute a DAG histórica primeiro.")
+    if not minio_client.bucket_exists(processing_bucket):
+        minio_client.make_bucket(processing_bucket)
 
-    latest_historical_file = max(historical_files, key=lambda x: x["LastModified"])
-    obj = s3_client.get_object(Bucket=raw_bucket, Key=latest_historical_file["Key"])
-    df_historical = pd.read_parquet(BytesIO(obj["Body"].read()))
-    print(f"Arquivo histórico carregado: {latest_historical_file['Key']}")
+    enriched_topic = 'enriched_stock_data'
+    brapi_data = {}
+    yfinance_data = {}
 
-    print("Carregando novos dados incrementais do MinIO...")
-    date_path = kwargs['ds'].replace('-', '/')
+    for message in brapi_consumer:
+        data = message.value
+        if data and 'symbol' in data:
+            brapi_data[data['symbol']] = data
 
-    all_new_records = []
-    for source in ["brapi_stock_quotes", "postgres_stock_quotes"]:
-        prefix = f"{source}/{date_path}/"
-        new_files = get_all_s3_objects(s3_client, raw_bucket, prefix)
-        if not new_files:
-            print(f"Nenhum arquivo novo encontrado para a fonte '{source}' na data {date_path}.")
-            continue
+    for message in yfinance_consumer:
+        data = message.value
+        if data and 'symbol' in data:
+            symbol_normalized = data['symbol'].replace(".SA", "")
+            yfinance_data[symbol_normalized] = data
 
-        print(f"Encontrados {len(new_files)} arquivos para a fonte '{source}'.")
-        for file in new_files:
-            obj = s3_client.get_object(Bucket=raw_bucket, Key=file["Key"])
-            content = obj["Body"].read().decode('utf-8')
-            all_new_records.append(json.loads(content))
+    brapi_consumer.close()
+    yfinance_consumer.close()
 
-    if not all_new_records:
-        print("Nenhum dado incremental novo para processar. Encerrando a task.")
-        return
+    enriched_count = 0
+    for symbol, b_data in brapi_data.items():
+        if symbol in yfinance_data:
+            y_data = yfinance_data[symbol]
+            
+            close_price = y_data.get('close', 0)
+            open_price = y_data.get('open', 0)
+            
+            enriched_message = {
+                "symbol": symbol,
+                "longName": b_data.get("longName"),
+                "regularMarketPrice": b_data.get("regularMarketPrice"),
+                "regularMarketChange": b_data.get("regularMarketChange"),
+                "regularMarketChangePercent": b_data.get("regularMarketChangePercent"),
+                "marketCap": b_data.get("marketCap"),
+                "open": open_price,
+                "high": y_data.get("high"),
+                "low": y_data.get("low"),
+                "close": close_price,
+                "volume": y_data.get("volume"),
+                "change_day": close_price - open_price if open_price and close_price else 0,
+                "processed_at": datetime.now().isoformat()
+            }
+            
+            producer.send(enriched_topic, value=enriched_message)
 
-    df_new_data = pd.DataFrame(all_new_records)
-    print(f"Total de {len(df_new_data)} novos registos carregados.")
+            try:
+                json_bytes = json.dumps(enriched_message, default=str).encode('utf-8')
+                object_name = f"{symbol}/{enriched_message['processed_at']}.json"
+                
+                minio_client.put_object(
+                    bucket_name=processing_bucket, 
+                    object_name=object_name, 
+                    data=BytesIO(json_bytes), 
+                    length=len(json_bytes), 
+                    content_type='application/json'
+                )
+            except Exception as e:
+                print(f"ERRO ao salvar o objeto '{object_name}' no MinIO: {e}")
 
-    print("Iniciando limpeza e transformação dos dados...")
+            enriched_count += 1
+    
+    producer.flush()
+    producer.close()
+    
+    if enriched_count == 0:
+        print("Nenhum dado foi enriquecido. Verifique se os produtores estão enviando dados para os tópicos de origem.")
 
-    df_historical.rename(columns={
-        "DATPRE": "date", "CODNEG": "symbol", "PREABE": "open",
-        "PREMAX": "high", "PREMIN": "low", "PREULT": "close", "QUATOT": "volume"
-    }, inplace=True)
-    df_historical['date'] = pd.to_datetime(df_historical['date'])
-    df_historical['symbol'] = df_historical['symbol'].str.strip() + ".SA"
-    df_historical = df_historical[["date", "symbol", "open", "high", "low", "close", "volume"]]
-
-    df_new_data.rename(columns={"timestamp": "date"}, inplace=True)
-    df_new_data['date'] = pd.to_datetime(df_new_data['date'], utc=True).dt.tz_convert('America/Sao_Paulo').dt.date
-    df_new_data['date'] = pd.to_datetime(df_new_data['date'])
-    df_new_data['symbol'] = df_new_data['symbol'].str.strip() + ".SA"
-    df_new_data = df_new_data.get(["date", "symbol", "open", "high", "low", "close", "volume"], df_new_data)
-
-    print("Unindo dados históricos e novos...")
-    df_full = pd.concat([df_historical, df_new_data], ignore_index=True)
-    df_full.drop_duplicates(subset=['symbol', 'date'], keep='last', inplace=True)
-    df_full.sort_values(by=['symbol', 'date'], inplace=True)
-    df_full.reset_index(drop=True, inplace=True)
-
-    print("Calculando novas métricas de negócio...")
-    df_full['daily_return'] = df_full.groupby('symbol')['close'].pct_change()
-    df_full['sma_5_days'] = df_full.groupby('symbol')['close'].transform(lambda x: x.rolling(window=5, min_periods=1).mean())
-    df_full['sma_20_days'] = df_full.groupby('symbol')['close'].transform(lambda x: x.rolling(window=20, min_periods=1).mean())
-    df_full['volatility_5_days'] = df_full.groupby('symbol')['daily_return'].transform(lambda x: x.rolling(window=5, min_periods=1).std())
-    df_full['volatility_20_days'] = df_full.groupby('symbol')['daily_return'].transform(lambda x: x.rolling(window=20, min_periods=1).std())
-
-    df_full.dropna(inplace=True)
-
-    processing_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    final_key = f"{execution_date_str}/b3_final_processed_{processing_timestamp}.parquet"
-    save_df_to_minio(s3_client, df_full, loaded_bucket, final_key)
-
-    print("Task de processamento concluída com sucesso.")

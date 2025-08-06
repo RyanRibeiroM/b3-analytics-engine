@@ -1,9 +1,13 @@
+apache-airflow==2.9.0
+apache-airflow-providers-postgres
+psycopg2-binary
+requests
+python-dotenv
+kafka-python
 pandas
+minio
+sqlalchemy
 boto3
 yfinance
-psycopg2-binary
-kafka-python
-SQLAlchemy
 matplotlib
 seaborn
-apache-airflow-providers-amazon
