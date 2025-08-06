@@ -1,83 +1,89 @@
 import os
 import time
 import json
-import psycopg2
-from psycopg2.extras import RealDictCursor
-from common import kafka_producer as kp
-from decimal import Decimal
+from kafka import KafkaProducer
+from sqlalchemy import create_engine, text
+from datetime import datetime, timedelta
 
 def get_env_variables():
-    kafka_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092')
-    topic_name = os.getenv('YFINANCE_TOPIC', 'postgres_stock_quotes')
-
-    db_host = os.getenv('POSTGRES_HOST', 'localhost')
-    db_port = os.getenv('POSTGRES_PORT', '5432')
-    db_name = os.getenv('POSTGRES_DB', 'stock_data')
-    db_user = os.getenv('POSTGRES_USER', 'user')
-    db_password = os.getenv('POSTGRES_PASSWORD', 'password')
-    
-    return kafka_servers, topic_name, db_host, db_port, db_name, db_user, db_password
-
-def create_pg_connection(db_host, db_port, db_name, db_user, db_password):
-    conn = None
-    while not conn:
-        try:
-            conn = psycopg2.connect(
-                host=db_host,
-                port=db_port,
-                dbname=db_name,
-                user=db_user,
-                password=db_password
-            )
-            print("Conexão com o PostgreSQL (postgres_producer) estabelecida com sucesso.")
-        except psycopg2.OperationalError as e:
-            print(f"Erro ao conectar ao PostgreSQL: {e}. Tentando novamente em 5 segundos...")
-            time.sleep(5)
-    return conn
-
-def default_json_serializer(obj):
-    if hasattr(obj, 'isoformat'):
-        return obj.isoformat()
-    if isinstance(obj, Decimal):
-        return float(obj)
-    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+    kafka_brokers = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
+    yfinance_topic = os.getenv("YFINANCE_TOPIC")
+    postgres_host = os.getenv("POSTGRES_HOST")
+    postgres_db = os.getenv("POSTGRES_DB")
+    postgres_user = os.getenv("POSTGRES_USER")
+    postgres_password = os.getenv("POSTGRES_PASSWORD")
+    return (
+        kafka_brokers,
+        yfinance_topic,
+        postgres_host,
+        postgres_db,
+        postgres_user,
+        postgres_password,
+    )
 
 def main():
-    kafka_servers, topic_name, db_host, db_port, db_name, db_user, db_password = get_env_variables()
-    
-    producer = kp.create_producer(bootstrap_servers=[kafka_servers])
-    if not producer:
-        print("Saindo, não foi possível conectar ao Kafka.")
-        return
-        
-    conn = create_pg_connection(db_host, db_port, db_name, db_user, db_password)
+    (
+        kafka_brokers,
+        yfinance_topic,
+        postgres_host,
+        postgres_db,
+        postgres_user,
+        postgres_password,
+    ) = get_env_variables()
 
-    conn.autocommit = True
+    producer = None
+    while not producer:
+        try:
+            producer = KafkaProducer(
+                bootstrap_servers=kafka_brokers.split(','),
+                value_serializer=lambda v: json.dumps(v, default=str).encode("utf-8"),
+            )
+        except Exception as e:
+            print(f">>> [ERRO] Falha ao conectar ao Kafka: {e}. Tentando novamente em 10 segundos...")
+            time.sleep(10)
 
-    last_processed_id = 0
-    
+    db_url = f"postgresql://{postgres_user}:{postgres_password}@{postgres_host}/{postgres_db}"
+    engine = None
+    while not engine:
+        try:
+            engine = create_engine(db_url)
+            with engine.connect() as connection:
+                pass
+        except Exception as e:
+            print(f">>> [ERRO] Falha ao conectar ao Postgres: {e}. Tentando novamente em 10 segundos...")
+            time.sleep(10)
+
+    last_timestamp = datetime.now() - timedelta(days=365 * 10) 
+
     try:
         while True:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute("SELECT * FROM yfinance_quotes WHERE id > %s ORDER BY id ASC", (last_processed_id,))
-                records = cur.fetchall()
-            
-            if records:
-                for record in records:
-                    message_to_send = json.loads(json.dumps(record, default=default_json_serializer))
-                    kp.send_message(producer, topic_name, message_to_send)
-                    print(f"Enviado registro ID {record['id']} para o Kafka.")
-                    last_processed_id = record['id']
-            else:
-                time.sleep(10)
+            with engine.connect() as connection:
+                query = text(
+                    "SELECT symbol, open, high, low, close, volume, timestamp "
+                    "FROM yfinance_quotes WHERE timestamp > :last_ts ORDER BY timestamp ASC"
+                )
 
-    except KeyboardInterrupt:
-        print("Execução interrompida.")
+                result = connection.execute(query, {"last_ts": last_timestamp})
+                rows = result.fetchall()
+
+                if rows:
+                    for row in rows:
+                        row_dict = dict(row._mapping)
+                        producer.send(yfinance_topic, value=row_dict)
+
+                    last_timestamp = rows[-1]._mapping['timestamp']
+                    producer.flush()
+                else:
+                    print(">>> [LOG] Nenhuma linha nova encontrada. A aguardar...")
+
+            time.sleep(60)
+    except Exception as e:
+        print(f">>> [ERRO] Erro inesperado no loop principal: {e}")
     finally:
         if producer:
             producer.close()
-        if conn:
-            conn.close()
+        if engine:
+            engine.dispose()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
